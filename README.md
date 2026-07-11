@@ -98,6 +98,137 @@ python -u app.py
 ```
 <img src="__assets__/figs/gradio.jpg" style="width: 75%">
 
+## Quadtree / VBench Video Evaluation
+
+This fork adds spatial token merging for AnimateDiff so video diffusion can be
+evaluated in the same style as the importance-token-merge paper. The comparison
+methods are:
+
+- `tome`: original random bipartite ToMe-style spatial token merging.
+- `importance`: CFG-importance-guided token merging from the importance paper.
+- `quadtree`: our spatial quadtree merging. For video, the default preset is conservative: late merge start and block levels `[1, 2]`.
+- `qt_early`: the aggressive image-style quadtree preset, kept for ablation only.
+
+Token merging is applied to spatial transformer tokens in AnimateDiff. Temporal
+attention and motion modules are left unmerged.
+
+### Environment Notes
+
+In the local `sana` environment, full 512x512 / 16-frame generation runs with:
+
+```
+--without-xformers
+```
+
+The installed xFormers path may raise a CUDA kernel configuration error for the
+temporal attention module. Disabling xFormers is slower but stable; on a 16 GB
+GPU, one 512x512 / 16-frame / 25-step video uses about 14.5 GB VRAM.
+
+If Hugging Face downloads hang through Xet, use:
+
+```
+export HF_HUB_DISABLE_XET=1
+```
+
+### Smoke Tests
+
+Use the small smoke config to verify that the pipeline, CFG importance map, and
+quadtree patch path are working:
+
+```
+cd /home/zeyu/Projects/quadtree-token-merge/animatediff
+source /home/zeyu/miniconda3/etc/profile.d/conda.sh
+conda activate sana
+
+HF_HUB_DISABLE_XET=1 python -u scripts/animate.py \
+  --config configs/prompts/smoke_quadtree.yaml \
+  --W 64 --H 64 --L 2 \
+  --without-xformers \
+  --prune-from-i 0 \
+  --merge-from-i 1 \
+  --compress-ratio 0.5 \
+  --free-err-mask \
+  --use-quadtree \
+  --quadtree-levels 1 2 \
+  --adaptive-ratio
+```
+
+For a single full-resolution sample:
+
+```
+HF_HUB_DISABLE_XET=1 python -u scripts/animate.py \
+  --config configs/prompts/single_quadtree_512.yaml \
+  --W 512 --H 512 --L 16 \
+  --without-xformers \
+  --merge-method quadtree \
+  --compress-ratio 0.3 \
+  --save-mp4
+```
+
+The saved `config.yaml` records the resolved `token_merge` settings, including
+method, ratio, quadtree levels, adaptive schedule, and merge start step.
+
+### Generate Videos for a VBench Table
+
+The helper script generates videos for the table-style comparison:
+
+```
+CONFIG=configs/prompts/single_quadtree_512.yaml \
+OUT_ROOT=outputs/vbench_table_anim \
+scripts/run_vbench_table_generation.sh
+```
+
+Default settings:
+
+- methods: `tome importance quadtree`
+- ratios: `0.40 0.60 0.70 0.75`
+- resolution: `512x512`
+- frames: `16`
+- steps: `25`
+- output format: GIF plus per-sample MP4
+
+The output layout is:
+
+```
+outputs/vbench_table_anim/
+  tome/r0p40/videos/00000.mp4
+  importance/r0p40/videos/00000.mp4
+  quadtree/r0p40/videos/00000.mp4
+  ...
+```
+
+These `videos/*.mp4` folders are the inputs to VBench. VBench is not installed
+by default in `sana`; install/run it separately, then collect scores into:
+
+```
+outputs/vbench_table_anim/scores.csv
+```
+
+with rows like:
+
+```
+ratio,method,semantic,quality,total
+0.40,tome,75.40,81.69,80.44
+0.40,importance,...
+0.40,quadtree,...
+```
+
+Generate a markdown table:
+
+```
+python scripts/make_vbench_table_template.py \
+  --scores outputs/vbench_table_anim/scores.csv
+```
+
+The target table format is:
+
+| r | Semantic ToMe | Semantic Importance | Semantic Ours | Quality ToMe | Quality Importance | Quality Ours | Total ToMe | Total Importance | Total Ours |
+|---|---|---|---|---|---|---|---|---|---|
+| 0.40 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| 0.60 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| 0.70 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| 0.75 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+
 
 ## Technical Explanation
 <details close>
