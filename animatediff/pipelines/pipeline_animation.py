@@ -14,7 +14,10 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 from diffusers.configuration_utils import FrozenDict
 from diffusers.models import AutoencoderKL
-from diffusers.pipeline_utils import DiffusionPipeline
+try:
+    from diffusers.pipeline_utils import DiffusionPipeline
+except ModuleNotFoundError:
+    from diffusers import DiffusionPipeline
 from diffusers.schedulers import (
     DDIMScheduler,
     DPMSolverMultistepScheduler,
@@ -29,6 +32,8 @@ from einops import rearrange
 
 from ..models.unet import UNet3DConditionModel
 from ..models.sparse_controlnet import SparseControlNetModel
+from ..tomesd_video import apply_patch as apply_tome_patch
+from ..tomesd_video import remove_patch as remove_tome_patch
 import pdb
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -339,6 +344,23 @@ class AnimationPipeline(DiffusionPipeline):
         controlnet_image_index: list = [0],
         controlnet_conditioning_scale: Union[float, List[float]] = 1.0,
 
+        # token merging
+        prune_from_i: int = -1,
+        merge_from_i: int = -1,
+        compress_ratio: float = 0.0,
+        free_err_mask: bool = False,
+        use_quadtree: bool = False,
+        quadtree_levels: Optional[list] = None,
+        quadtree_res_adaptive: bool = False,
+        quadtree_pool: str = "max",
+        quadtree_weighted: bool = True,
+        quadtree_shift: bool = True,
+        quadtree_budget_mode: str = "equal_quota",
+        adaptive_ratio: bool = False,
+        adaptive_alpha: float = 1.0,
+        max_downsample: int = 1,
+        merge_mlp: bool = False,
+
         **kwargs,
     ):
         # Default height and width to unet
@@ -394,8 +416,75 @@ class AnimationPipeline(DiffusionPipeline):
 
         # Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+        err_mask = None
+        use_token_merge = merge_from_i >= 0 or prune_from_i >= 0
+        if use_token_merge:
+            assert compress_ratio > 0 and merge_from_i >= prune_from_i
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
+                if use_token_merge:
+                    if adaptive_ratio and i >= merge_from_i:
+                        active = max(num_inference_steps - merge_from_i - 1, 1)
+                        frac = ((num_inference_steps - 1 - i) / active) ** adaptive_alpha
+                        r_min = compress_ratio * 0.7
+                        r_max = min(2.0 * compress_ratio - r_min, 0.95)
+                        if use_quadtree:
+                            levels = quadtree_levels if quadtree_levels else [1, 2, 4]
+                            qt_cap = 1.0 - 1.0 / (max(levels) ** 2)
+                            r_max = min(r_max, qt_cap)
+                            r_min = min(r_min, qt_cap)
+                        step_ratio = r_min + (r_max - r_min) * frac
+                    else:
+                        step_ratio = compress_ratio
+
+                    qt_kwargs = dict(
+                        use_quadtree=use_quadtree,
+                        quadtree_levels=quadtree_levels,
+                        quadtree_res_adaptive=quadtree_res_adaptive,
+                        quadtree_pool=quadtree_pool,
+                        quadtree_weighted=quadtree_weighted,
+                        quadtree_shift=quadtree_shift,
+                        quadtree_budget_mode=quadtree_budget_mode,
+                        max_downsample=max_downsample,
+                        merge_mlp=merge_mlp,
+                    )
+
+                    if free_err_mask:
+                        if err_mask is not None and i >= merge_from_i:
+                            self.unet = apply_tome_patch(
+                                self.unet,
+                                ratio=step_ratio,
+                                err_mask=err_mask,
+                                **qt_kwargs,
+                            )
+                        elif (
+                            prune_from_i >= 0
+                            and err_mask is not None
+                            and i >= prune_from_i
+                        ):
+                            self.unet = apply_tome_patch(
+                                self.unet,
+                                ratio=step_ratio,
+                                err_mask=err_mask,
+                                m_mode="none",
+                                **qt_kwargs,
+                            )
+                        else:
+                            remove_tome_patch(self.unet)
+                    else:
+                        if i == merge_from_i:
+                            self.unet = apply_tome_patch(
+                                self.unet, ratio=step_ratio, **qt_kwargs
+                            )
+                        elif prune_from_i >= 0 and i == prune_from_i:
+                            self.unet = apply_tome_patch(
+                                self.unet,
+                                ratio=step_ratio,
+                                m_mode="none",
+                                **qt_kwargs,
+                            )
+
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
@@ -443,6 +532,18 @@ class AnimationPipeline(DiffusionPipeline):
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
+                if free_err_mask and do_classifier_free_guidance:
+                    err_mask_raw = torch.abs(noise_pred_text - noise_pred_uncond)
+                    err_mask_raw = err_mask_raw.mean(1)  # [B, F, H, W]
+                    err_mask_raw = rearrange(err_mask_raw, "b f h w -> (b f) h w")
+                    heat_idx = err_mask_raw.reshape(
+                        err_mask_raw.shape[0], -1, 1
+                    ).argsort(dim=1, descending=True)
+                    err_mask = {
+                        "heat_map": err_mask_raw,
+                        "heat_idx": heat_idx,
+                    }
+
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
 
@@ -451,6 +552,9 @@ class AnimationPipeline(DiffusionPipeline):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         callback(i, t, latents)
+
+        if use_token_merge:
+            remove_tome_patch(self.unet)
 
         # Post-processing
         video = self.decode_latents(latents)

@@ -73,6 +73,17 @@ def save_videos_grid(videos: torch.Tensor, path: str, rescale=False, n_rows=6, f
     imageio.mimsave(path, outputs, fps=fps)
 
 
+def save_video(video: torch.Tensor, path: str, rescale=False, fps=8):
+    video = rearrange(video, "c t h w -> t h w c")
+    video = video.detach().cpu()
+    if rescale:
+        video = (video + 1.0) / 2.0
+    video = (video.clamp(0, 1).numpy() * 255).astype(np.uint8)
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    imageio.mimsave(path, list(video), fps=fps)
+
+
 def auto_download(local_path, is_dreambooth_lora=False):
     hf_repo = "guoyww/animatediff_t2i_backups" if is_dreambooth_lora else "guoyww/animatediff"
     folder, filename = os.path.split(local_path)

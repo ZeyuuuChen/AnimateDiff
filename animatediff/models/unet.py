@@ -12,7 +12,10 @@ import torch.nn as nn
 import torch.utils.checkpoint
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.modeling_utils import ModelMixin
+try:
+    from diffusers.modeling_utils import ModelMixin
+except ModuleNotFoundError:
+    from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import BaseOutput, logging
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from .unet_blocks import (
@@ -477,8 +480,16 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin):
     @classmethod
     def from_pretrained_2d(cls, pretrained_model_name_or_path, unet_additional_kwargs={}, **kwargs):
         from diffusers import __version__
-        from diffusers.utils import DIFFUSERS_CACHE, SAFETENSORS_WEIGHTS_NAME, WEIGHTS_NAME, is_safetensors_available
-        from diffusers.modeling_utils import load_state_dict
+        try:
+            from diffusers.utils import DIFFUSERS_CACHE
+        except ImportError:
+            from huggingface_hub.constants import HF_HUB_CACHE as DIFFUSERS_CACHE
+        from diffusers.utils import SAFETENSORS_WEIGHTS_NAME, WEIGHTS_NAME, is_safetensors_available
+        try:
+            from diffusers.modeling_utils import load_state_dict
+        except ModuleNotFoundError:
+            from diffusers.models.modeling_utils import load_state_dict
+        from diffusers.utils.hub_utils import _get_model_file
         print(f"loaded 3D unet's pretrained weights from {pretrained_model_name_or_path} ...")
 
         cache_dir = kwargs.pop("cache_dir", DIFFUSERS_CACHE)
@@ -497,39 +508,29 @@ class UNet3DConditionModel(ModelMixin, ConfigMixin):
             "framework": "pytorch",
         }
 
-        model_file = None
-        if is_safetensors_available():
-            try:
-                model_file = cls._get_model_file(
-                    pretrained_model_name_or_path,
-                    weights_name=SAFETENSORS_WEIGHTS_NAME,
-                    cache_dir=cache_dir,
-                    force_download=force_download,
-                    resume_download=resume_download,
-                    proxies=proxies,
-                    local_files_only=local_files_only,
-                    use_auth_token=use_auth_token,
-                    revision=revision,
-                    subfolder=subfolder,
-                    user_agent=user_agent,
-                )
-            except:
-                pass
-
-        if model_file is None:
-            model_file = cls._get_model_file(
+        def get_model_file(weights_name):
+            return _get_model_file(
                 pretrained_model_name_or_path,
-                weights_name=WEIGHTS_NAME,
+                weights_name=weights_name,
                 cache_dir=cache_dir,
                 force_download=force_download,
-                resume_download=resume_download,
                 proxies=proxies,
                 local_files_only=local_files_only,
-                use_auth_token=use_auth_token,
+                token=use_auth_token,
                 revision=revision,
                 subfolder=subfolder,
                 user_agent=user_agent,
             )
+
+        model_file = None
+        if is_safetensors_available():
+            try:
+                model_file = get_model_file(SAFETENSORS_WEIGHTS_NAME)
+            except:
+                pass
+
+        if model_file is None:
+            model_file = get_model_file(WEIGHTS_NAME)
 
         config, unused_kwargs = cls.load_config(
             pretrained_model_name_or_path,

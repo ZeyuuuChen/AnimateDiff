@@ -2,7 +2,11 @@ import argparse
 import datetime
 import inspect
 import os
+import sys
 from omegaconf import OmegaConf
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 import torchvision.transforms as transforms
@@ -16,16 +20,64 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from animatediff.models.unet import UNet3DConditionModel
 from animatediff.models.sparse_controlnet import SparseControlNetModel
 from animatediff.pipelines.pipeline_animation import AnimationPipeline
-from animatediff.utils.util import save_videos_grid
+from animatediff.utils.util import save_video, save_videos_grid
 from animatediff.utils.util import load_weights, auto_download
 from diffusers.utils.import_utils import is_xformers_available
 
 from einops import rearrange, repeat
 
 import csv, pdb, glob, math
-from pathlib import Path
 from PIL import Image
 import numpy as np
+
+
+def apply_merge_preset(args):
+    if args.merge_method is None:
+        return args
+
+    ratio = args.compress_ratio if args.compress_ratio > 0 else 0.5
+
+    if args.merge_method == "baseline":
+        args.prune_from_i = -1
+        args.merge_from_i = -1
+        args.compress_ratio = 0.0
+        args.free_err_mask = False
+        args.use_quadtree = False
+        args.adaptive_ratio = False
+    elif args.merge_method == "tome":
+        args.prune_from_i = -1
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = False
+        args.use_quadtree = False
+        args.adaptive_ratio = False
+    elif args.merge_method == "importance":
+        args.prune_from_i = 0
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = False
+        args.adaptive_ratio = False
+    elif args.merge_method == "qt_early":
+        args.prune_from_i = 0
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.adaptive_ratio = True
+    elif args.merge_method in {"quadtree", "qt_opt"}:
+        args.prune_from_i = 10
+        args.merge_from_i = 10
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2]
+        args.adaptive_ratio = True
+    else:
+        raise ValueError(f"Unknown merge method: {args.merge_method}")
+
+    return args
 
 
 @torch.no_grad()
@@ -34,8 +86,8 @@ def main(args):
     func_args = dict(func_args)
     
     time_str = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    savedir = f"samples/{Path(args.config).stem}-{time_str}"
-    os.makedirs(savedir)
+    savedir = args.savedir or f"samples/{Path(args.config).stem}-{time_str}"
+    os.makedirs(savedir, exist_ok=True)
 
     config  = OmegaConf.load(args.config)
     samples = []
@@ -145,6 +197,25 @@ def main(args):
         random_seeds = [random_seeds] if isinstance(random_seeds, int) else list(random_seeds)
         random_seeds = random_seeds * len(prompts) if len(random_seeds) == 1 else random_seeds
         
+        config[model_idx].token_merge = {
+            "merge_method": args.merge_method,
+            "prune_from_i": model_config.get("prune_from_i", args.prune_from_i),
+            "merge_from_i": model_config.get("merge_from_i", args.merge_from_i),
+            "compress_ratio": model_config.get("compress_ratio", args.compress_ratio),
+            "free_err_mask": model_config.get("free_err_mask", args.free_err_mask),
+            "use_quadtree": model_config.get("use_quadtree", args.use_quadtree),
+            "quadtree_levels": model_config.get("quadtree_levels", args.quadtree_levels),
+            "quadtree_res_adaptive": model_config.get("quadtree_res_adaptive", args.quadtree_res_adaptive),
+            "quadtree_pool": model_config.get("quadtree_pool", args.quadtree_pool),
+            "quadtree_weighted": model_config.get("quadtree_weighted", not args.quadtree_unweighted),
+            "quadtree_shift": model_config.get("quadtree_shift", not args.quadtree_no_shift),
+            "quadtree_budget_mode": model_config.get("quadtree_budget_mode", args.quadtree_budget_mode),
+            "adaptive_ratio": model_config.get("adaptive_ratio", args.adaptive_ratio),
+            "adaptive_alpha": model_config.get("adaptive_alpha", args.adaptive_alpha),
+            "max_downsample": model_config.get("max_downsample", args.max_downsample),
+            "merge_mlp": model_config.get("merge_mlp", args.merge_mlp),
+        }
+
         config[model_idx].random_seed = []
         for prompt_idx, (prompt, n_prompt, random_seed) in enumerate(zip(prompts, n_prompts, random_seeds)):
             
@@ -166,17 +237,38 @@ def main(args):
 
                 controlnet_images = controlnet_images,
                 controlnet_image_index = model_config.get("controlnet_image_indexs", [0]),
+
+                prune_from_i = model_config.get("prune_from_i", args.prune_from_i),
+                merge_from_i = model_config.get("merge_from_i", args.merge_from_i),
+                compress_ratio = model_config.get("compress_ratio", args.compress_ratio),
+                free_err_mask = model_config.get("free_err_mask", args.free_err_mask),
+                use_quadtree = model_config.get("use_quadtree", args.use_quadtree),
+                quadtree_levels = model_config.get("quadtree_levels", args.quadtree_levels),
+                quadtree_res_adaptive = model_config.get("quadtree_res_adaptive", args.quadtree_res_adaptive),
+                quadtree_pool = model_config.get("quadtree_pool", args.quadtree_pool),
+                quadtree_weighted = model_config.get("quadtree_weighted", not args.quadtree_unweighted),
+                quadtree_shift = model_config.get("quadtree_shift", not args.quadtree_no_shift),
+                quadtree_budget_mode = model_config.get("quadtree_budget_mode", args.quadtree_budget_mode),
+                adaptive_ratio = model_config.get("adaptive_ratio", args.adaptive_ratio),
+                adaptive_alpha = model_config.get("adaptive_alpha", args.adaptive_alpha),
+                max_downsample = model_config.get("max_downsample", args.max_downsample),
+                merge_mlp = model_config.get("merge_mlp", args.merge_mlp),
             ).videos
             samples.append(sample)
 
             prompt = "-".join((prompt.replace("/", "").split(" ")[:10]))
             save_videos_grid(sample, f"{savedir}/sample/{sample_idx}-{prompt}.gif")
+            if args.save_mp4:
+                save_video(sample[0], f"{savedir}/videos/{sample_idx:05d}.mp4", fps=args.fps)
             print(f"save to {savedir}/sample/{prompt}.gif")
             
             sample_idx += 1
 
     samples = torch.concat(samples)
     save_videos_grid(samples, f"{savedir}/sample.gif", n_rows=4)
+    if args.save_mp4:
+        for idx, sample in enumerate(samples):
+            save_video(sample, f"{savedir}/videos_gridless/{idx:05d}.mp4", fps=args.fps)
 
     OmegaConf.save(config, f"{savedir}/config.yaml")
 
@@ -192,6 +284,28 @@ if __name__ == "__main__":
     parser.add_argument("--H", type=int, default=512)
 
     parser.add_argument("--without-xformers", action="store_true")
+    parser.add_argument("--savedir", type=str, default=None)
+    parser.add_argument("--save-mp4", action="store_true")
+    parser.add_argument("--fps", type=int, default=8)
+
+    parser.add_argument("--merge-method", type=str, default=None,
+                        choices=["baseline", "tome", "importance", "quadtree", "qt_early", "qt_opt"])
+    parser.add_argument("--prune-from-i", type=int, default=-1)
+    parser.add_argument("--merge-from-i", type=int, default=-1)
+    parser.add_argument("--compress-ratio", type=float, default=0.0)
+    parser.add_argument("--free-err-mask", action="store_true")
+    parser.add_argument("--use-quadtree", action="store_true")
+    parser.add_argument("--quadtree-levels", type=int, nargs="+", default=None)
+    parser.add_argument("--quadtree-res-adaptive", action="store_true")
+    parser.add_argument("--quadtree-pool", type=str, default="max", choices=["max", "avg"])
+    parser.add_argument("--quadtree-unweighted", action="store_true")
+    parser.add_argument("--quadtree-no-shift", action="store_true")
+    parser.add_argument("--quadtree-budget-mode", type=str, default="equal_quota", choices=["equal_quota", "cost_global"])
+    parser.add_argument("--adaptive-ratio", action="store_true")
+    parser.add_argument("--adaptive-alpha", type=float, default=1.0)
+    parser.add_argument("--max-downsample", type=int, default=1)
+    parser.add_argument("--merge-mlp", action="store_true")
 
     args = parser.parse_args()
+    args = apply_merge_preset(args)
     main(args)

@@ -1,0 +1,14 @@
+- dreambooth_path: ""
+  lora_model_path: ""
+  inference_config: "configs/inference/inference-v3.yaml"
+  motion_module: "models/Motion_Module/v3_sd15_mm.ckpt"
+
+  seed: [1234]
+  steps: 2
+  guidance_scale: 8
+
+  prompt:
+    - "a small robot waving in a sunny park"
+
+  n_prompt:
+    - "low quality, blurry"

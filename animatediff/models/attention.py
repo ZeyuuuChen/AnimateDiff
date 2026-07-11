@@ -8,10 +8,27 @@ import torch.nn.functional as F
 from torch import nn
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.modeling_utils import ModelMixin
+try:
+    from diffusers.modeling_utils import ModelMixin
+except ModuleNotFoundError:
+    from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import BaseOutput
 from diffusers.utils.import_utils import is_xformers_available
-from diffusers.models.attention import CrossAttention, FeedForward, AdaLayerNorm
+try:
+    from diffusers.models.attention import CrossAttention, FeedForward, AdaLayerNorm
+except ImportError:
+    from diffusers.models.attention import FeedForward, AdaLayerNorm
+    from diffusers.models.attention_processor import Attention as _Attention
+
+    class CrossAttention(_Attention):
+        def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, video_length=None, **kwargs):
+            kwargs.pop("video_length", None)
+            return super().forward(
+                hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                attention_mask=attention_mask,
+                **kwargs,
+            )
 
 from einops import rearrange, repeat
 import pdb
@@ -225,7 +242,7 @@ class BasicTransformerBlock(nn.Module):
             nn.init.zeros_(self.attn_temp.to_out[0].weight.data)
             self.norm_temp = AdaLayerNorm(dim, num_embeds_ada_norm) if self.use_ada_layer_norm else nn.LayerNorm(dim)
 
-    def set_use_memory_efficient_attention_xformers(self, use_memory_efficient_attention_xformers: bool):
+    def set_use_memory_efficient_attention_xformers(self, use_memory_efficient_attention_xformers: bool, attention_op=None):
         if not is_xformers_available():
             print("Here is how to install it")
             raise ModuleNotFoundError(
