@@ -1,0 +1,23 @@
+- dreambooth_path: "models/DreamBooth_LoRA/realisticVisionV60B1_v51VAE.safetensors"
+  lora_model_path: ""
+  inference_config: "configs/inference/inference-v3.yaml"
+  motion_module: "models/Motion_Module/v3_sd15_mm.ckpt"
+
+  seed: [1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234]
+  steps: 30
+  guidance_scale: 7.5
+
+  prompt:
+    - "Tower"
+    - "A jellyfish floating through the ocean, with bioluminescent tentacles"
+    - "In a still frame, the ornate Victorian streetlamp stands solemnly, adorned with intricate ironwork and stained glass panels"
+    - "Two young men playing a game of frisbee on a lush green field"
+    - "A panda playing an acoustic guitar on a small stage"
+    - "An astronaut riding a horse across a desert landscape"
+    - "A red sports car driving through a rainy city at night"
+    - "A golden retriever running along a sunny beach"
+    - "A steam train traveling through snow-covered mountains"
+    - "A chef cooking colorful vegetables in a modern kitchen"
+
+  n_prompt:
+    - "low quality, blurry, distorted, watermark, text"

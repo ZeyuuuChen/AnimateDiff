@@ -8,6 +8,10 @@ ossutil_output/
 .ossutil_checkpoint/
 
 scripts/*
+!scripts/visualize_quadtree_resolution.py
+!scripts/test_quadtree_adapter.py
+!scripts/slurm_compare_10prompts.sh
+!scripts/slurm_eval_compare_10prompts.sh
 !scripts/animate.py
 
 *.ipynb

@@ -4,10 +4,14 @@ set -eo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-source /home/zeyu/miniconda3/etc/profile.d/conda.sh
-conda activate sana
+CONDA_EXE="${CONDA_EXE:-/mnt/disk2/zeyu/miniconda3/bin/conda}"
+if [[ ! -x "$CONDA_EXE" ]]; then
+  echo "Conda executable not found: $CONDA_EXE" >&2
+  exit 1
+fi
 
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
+export XFORMERS_IGNORE_FLASH_VERSION_CHECK=1
 
 CONFIG="${CONFIG:-configs/prompts/single_quadtree_512.yaml}"
 OUT_ROOT="${OUT_ROOT:-outputs/vbench_table_anim}"
@@ -17,6 +21,7 @@ L="${L:-16}"
 FPS="${FPS:-8}"
 RATIOS="${RATIOS:-0.40 0.60 0.70 0.75}"
 METHODS="${METHODS:-tome importance quadtree}"
+PRETRAINED_MODEL_PATH="${PRETRAINED_MODEL_PATH:-/mnt/disk2/zeyu/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/451f4fe16113bff5a5d2269ed5ad43b0592e9a14}"
 
 mkdir -p "$OUT_ROOT"
 
@@ -25,7 +30,8 @@ for method in $METHODS; do
     ratio_tag="${ratio/./p}"
     savedir="$OUT_ROOT/${method}/r${ratio_tag}"
     echo "==> method=${method} ratio=${ratio} savedir=${savedir}"
-    python -u scripts/animate.py \
+    "$CONDA_EXE" run --no-capture-output -n sana python -u scripts/animate.py \
+      --pretrained-model-path "$PRETRAINED_MODEL_PATH" \
       --config "$CONFIG" \
       --W "$W" --H "$H" --L "$L" \
       --without-xformers \

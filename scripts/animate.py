@@ -66,9 +66,209 @@ def apply_merge_preset(args):
         args.use_quadtree = True
         args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
         args.adaptive_ratio = True
-    elif args.merge_method in {"quadtree", "qt_opt"}:
-        args.prune_from_i = 10
-        args.merge_from_i = 10
+    elif args.merge_method == "quadtree":
+        # Match the repository's text-to-image Quadtree implementation:
+        # multi-resolution 1x1/2x2/4x4 leaves, max-pooled CFG importance,
+        # equal per-level budget, and a randomly shifted grid each step.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = False
+        args.adaptive_ratio = False
+    elif args.merge_method == "qt_video_opt":
+        # Same target K as the control Quadtree, with video-aware ranking:
+        # protect saliency in adjacent frames, include local feature detail,
+        # and spend less of the removal budget on coarse 4x4 leaves.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = False
+        args.quadtree_temporal_lambda = 0.7
+        args.quadtree_feature_lambda = 0.35
+        args.quadtree_coarse_budget_fraction = 0.25
+        args.adaptive_ratio = False
+    elif args.merge_method == "qt_stage_split":
+        # Isolated fair ablation: the encoder retains multiresolution leaves,
+        # while the detail-restoring decoder forbids 4x4 groups. Ratio/K stay
+        # unchanged in every block.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = False
+        args.quadtree_decoder_fine = True
+        args.adaptive_ratio = False
+    elif args.merge_method == "qt_rank_opt":
+        # Ranking-only ablation: preserve the control leaf-size budget and K,
+        # but rank safe blocks using temporally protected CFG saliency plus
+        # local attention-feature disagreement.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = False
+        args.quadtree_temporal_lambda = 0.7
+        args.quadtree_feature_lambda = 0.35
+        args.quadtree_coarse_budget_fraction = None
+        args.quadtree_decoder_fine = False
+        args.adaptive_ratio = False
+    elif args.merge_method in ("qt_feature_only", "qt_temporal_only"):
+        # Fast ranking ablations retain the exact control leaf budget and K.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = False
+        args.quadtree_temporal_lambda = 0.7 if args.merge_method == "qt_temporal_only" else 0.0
+        args.quadtree_feature_lambda = 0.35 if args.merge_method == "qt_feature_only" else 0.0
+        args.quadtree_coarse_budget_fraction = None
+        args.quadtree_decoder_fine = False
+        args.adaptive_ratio = False
+    elif args.merge_method in ("qt_feature_low", "qt_temporal_low", "qt_uniform"):
+        # Second quick-screen round: conservative ranking weights and a merge
+        # aggregation ablation, all with the exact control grouping budget/K.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = args.merge_method == "qt_uniform"
+        args.quadtree_temporal_lambda = 0.25 if args.merge_method == "qt_temporal_low" else 0.0
+        args.quadtree_feature_lambda = 0.05 if args.merge_method == "qt_feature_low" else 0.0
+        args.quadtree_coarse_budget_fraction = None
+        args.quadtree_decoder_fine = False
+        args.adaptive_ratio = False
+    elif args.merge_method in ("qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed"):
+        # Quadtree allocates spatial representatives; feature similarity, not
+        # rigid block membership, determines every source-to-destination edge.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = True
+        args.quadtree_temporal_lambda = 0.0
+        args.quadtree_feature_lambda = 0.0
+        args.quadtree_coarse_budget_fraction = None
+        args.quadtree_decoder_fine = False
+        args.quadtree_similarity_merge = True
+        args.quadtree_similarity_rep = {
+            "qt_similarity": "cfg",
+            "qt_similarity_medoid": "medoid",
+            "qt_similarity_mixed": "mixed",
+        }[args.merge_method]
+        args.adaptive_ratio = False
+    elif args.merge_method in ("qt_similarity_spread", "qt_similarity_focus"):
+        # Same K with different spatial destination density. Spread uses more
+        # 2x2 leaves and medoid representatives for visual quality; focus uses
+        # more 4x4 background leaves, leaving more 1x1 high-CFG representatives.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = True
+        args.quadtree_temporal_lambda = 0.0
+        args.quadtree_feature_lambda = 0.0
+        args.quadtree_coarse_budget_fraction = (
+            0.35 if args.merge_method == "qt_similarity_spread" else 0.65
+        )
+        args.quadtree_decoder_fine = False
+        args.quadtree_similarity_merge = True
+        args.quadtree_similarity_rep = (
+            "medoid" if args.merge_method == "qt_similarity_spread" else "mixed"
+        )
+        args.adaptive_ratio = False
+    elif args.merge_method in ("qt_hybrid_medoid", "qt_hybrid_mixed"):
+        # Quadtree allocates 25% adaptive destinations; CFG+similarity chooses
+        # exactly r sources, leaving high-value/low-similarity tokens unmerged.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = True
+        args.quadtree_temporal_lambda = 0.0
+        args.quadtree_feature_lambda = 0.0
+        args.quadtree_coarse_budget_fraction = None
+        args.quadtree_decoder_fine = False
+        args.quadtree_similarity_merge = True
+        args.quadtree_similarity_rep = (
+            "medoid" if args.merge_method == "qt_hybrid_medoid" else "mixed"
+        )
+        args.quadtree_similarity_dst_ratio = 0.25
+        args.adaptive_ratio = False
+    elif args.merge_method in ("qt_hybrid_d20", "qt_hybrid_d30"):
+        # Destination-ratio search at fixed final K: d20 leaves more protected
+        # unmatched tokens; d30 provides denser similarity representatives.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = True
+        args.quadtree_temporal_lambda = 0.0
+        args.quadtree_feature_lambda = 0.0
+        args.quadtree_coarse_budget_fraction = None
+        args.quadtree_decoder_fine = False
+        args.quadtree_similarity_merge = True
+        args.quadtree_similarity_rep = (
+            "mixed" if args.merge_method == "qt_hybrid_d20" else "medoid"
+        )
+        args.quadtree_similarity_dst_ratio = (
+            0.20 if args.merge_method == "qt_hybrid_d20" else 0.30
+        )
+        args.adaptive_ratio = False
+    elif args.merge_method == "qt_opt":
+        args.prune_from_i = 14
+        args.merge_from_i = 14
         args.compress_ratio = ratio
         args.free_err_mask = True
         args.use_quadtree = True
@@ -210,6 +410,13 @@ def main(args):
             "quadtree_weighted": model_config.get("quadtree_weighted", not args.quadtree_unweighted),
             "quadtree_shift": model_config.get("quadtree_shift", not args.quadtree_no_shift),
             "quadtree_budget_mode": model_config.get("quadtree_budget_mode", args.quadtree_budget_mode),
+            "quadtree_temporal_lambda": model_config.get("quadtree_temporal_lambda", args.quadtree_temporal_lambda),
+            "quadtree_feature_lambda": model_config.get("quadtree_feature_lambda", args.quadtree_feature_lambda),
+            "quadtree_coarse_budget_fraction": model_config.get("quadtree_coarse_budget_fraction", args.quadtree_coarse_budget_fraction),
+            "quadtree_decoder_fine": model_config.get("quadtree_decoder_fine", args.quadtree_decoder_fine),
+            "quadtree_similarity_merge": model_config.get("quadtree_similarity_merge", args.quadtree_similarity_merge),
+            "quadtree_similarity_rep": model_config.get("quadtree_similarity_rep", args.quadtree_similarity_rep),
+            "quadtree_similarity_dst_ratio": model_config.get("quadtree_similarity_dst_ratio", args.quadtree_similarity_dst_ratio),
             "adaptive_ratio": model_config.get("adaptive_ratio", args.adaptive_ratio),
             "adaptive_alpha": model_config.get("adaptive_alpha", args.adaptive_alpha),
             "max_downsample": model_config.get("max_downsample", args.max_downsample),
@@ -249,6 +456,13 @@ def main(args):
                 quadtree_weighted = model_config.get("quadtree_weighted", not args.quadtree_unweighted),
                 quadtree_shift = model_config.get("quadtree_shift", not args.quadtree_no_shift),
                 quadtree_budget_mode = model_config.get("quadtree_budget_mode", args.quadtree_budget_mode),
+                quadtree_temporal_lambda = model_config.get("quadtree_temporal_lambda", args.quadtree_temporal_lambda),
+                quadtree_feature_lambda = model_config.get("quadtree_feature_lambda", args.quadtree_feature_lambda),
+                quadtree_coarse_budget_fraction = model_config.get("quadtree_coarse_budget_fraction", args.quadtree_coarse_budget_fraction),
+                quadtree_decoder_fine = model_config.get("quadtree_decoder_fine", args.quadtree_decoder_fine),
+                quadtree_similarity_merge = model_config.get("quadtree_similarity_merge", args.quadtree_similarity_merge),
+                quadtree_similarity_rep = model_config.get("quadtree_similarity_rep", args.quadtree_similarity_rep),
+                quadtree_similarity_dst_ratio = model_config.get("quadtree_similarity_dst_ratio", args.quadtree_similarity_dst_ratio),
                 adaptive_ratio = model_config.get("adaptive_ratio", args.adaptive_ratio),
                 adaptive_alpha = model_config.get("adaptive_alpha", args.adaptive_alpha),
                 max_downsample = model_config.get("max_downsample", args.max_downsample),
@@ -289,7 +503,7 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=8)
 
     parser.add_argument("--merge-method", type=str, default=None,
-                        choices=["baseline", "tome", "importance", "quadtree", "qt_early", "qt_opt"])
+                        choices=["baseline", "tome", "importance", "quadtree", "qt_video_opt", "qt_stage_split", "qt_rank_opt", "qt_feature_only", "qt_temporal_only", "qt_feature_low", "qt_temporal_low", "qt_uniform", "qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed", "qt_similarity_spread", "qt_similarity_focus", "qt_hybrid_medoid", "qt_hybrid_mixed", "qt_hybrid_d20", "qt_hybrid_d30", "qt_early", "qt_opt"])
     parser.add_argument("--prune-from-i", type=int, default=-1)
     parser.add_argument("--merge-from-i", type=int, default=-1)
     parser.add_argument("--compress-ratio", type=float, default=0.0)
@@ -301,6 +515,13 @@ if __name__ == "__main__":
     parser.add_argument("--quadtree-unweighted", action="store_true")
     parser.add_argument("--quadtree-no-shift", action="store_true")
     parser.add_argument("--quadtree-budget-mode", type=str, default="equal_quota", choices=["equal_quota", "cost_global"])
+    parser.add_argument("--quadtree-temporal-lambda", type=float, default=0.0)
+    parser.add_argument("--quadtree-feature-lambda", type=float, default=0.0)
+    parser.add_argument("--quadtree-coarse-budget-fraction", type=float, default=None)
+    parser.add_argument("--quadtree-decoder-fine", action="store_true")
+    parser.add_argument("--quadtree-similarity-merge", action="store_true")
+    parser.add_argument("--quadtree-similarity-rep", type=str, default="cfg", choices=["cfg", "medoid", "mixed"])
+    parser.add_argument("--quadtree-similarity-dst-ratio", type=float, default=None)
     parser.add_argument("--adaptive-ratio", action="store_true")
     parser.add_argument("--adaptive-alpha", type=float, default=1.0)
     parser.add_argument("--max-downsample", type=int, default=1)

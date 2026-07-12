@@ -146,6 +146,21 @@ def load_weights(
             
         # 1. vae
         converted_vae_checkpoint = convert_ldm_vae_checkpoint(dreambooth_state_dict, animation_pipeline.vae.config)
+        # AnimateDiff's converter targets older Diffusers attention names.
+        # Diffusers >= 0.30 uses AttentionProcessor-style projections in the
+        # VAE mid block. Keep checkpoint values unchanged and translate keys.
+        vae_attn_key_map = {
+            ".query.": ".to_q.",
+            ".key.": ".to_k.",
+            ".value.": ".to_v.",
+            ".proj_attn.": ".to_out.0.",
+        }
+        for old_key in list(converted_vae_checkpoint):
+            new_key = old_key
+            for old_part, new_part in vae_attn_key_map.items():
+                new_key = new_key.replace(old_part, new_part)
+            if new_key != old_key:
+                converted_vae_checkpoint[new_key] = converted_vae_checkpoint.pop(old_key)
         animation_pipeline.vae.load_state_dict(converted_vae_checkpoint)
         # 2. unet
         converted_unet_checkpoint = convert_ldm_unet_checkpoint(dreambooth_state_dict, animation_pipeline.unet.config)

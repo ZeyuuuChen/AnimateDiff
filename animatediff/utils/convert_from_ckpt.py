@@ -723,6 +723,10 @@ def convert_ldm_clip_checkpoint(checkpoint):
         if key.startswith("cond_stage_model.transformer"):
             text_model_dict[key[len("cond_stage_model.transformer.") :]] = checkpoint[key]
 
+    # Newer Transformers registers position_ids as non-persistent, while old
+    # SD checkpoints may still serialize it. It is deterministically recreated
+    # by CLIPTextEmbeddings and is not a learned parameter.
+    text_model_dict.pop("text_model.embeddings.position_ids", None)
     text_model.load_state_dict(text_model_dict)
 
     return text_model

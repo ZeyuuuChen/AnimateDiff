@@ -100,13 +100,53 @@ python -u app.py
 
 ## Quadtree / VBench Video Evaluation
 
+### Importance-paper Figure 8 reproduction
+
+The supplementary settings are 30 sampling steps and CFG 7.5 for every method.
+The three published prompts are stored in
+`configs/prompts/importance_fig8.yaml`. Submit the matched baseline, ToMe,
+Importance, and Quadtree run with `scripts/slurm_importance_fig8.sh`.
+The T2I backbone follows AnimateDiff's official v3 T2V RealisticVision example:
+`realisticVisionV60B1_v51VAE.safetensors` with `v3_sd15_mm.ckpt`. The earlier
+bare-SD1.5 run under `outputs/importance_fig8` is invalid as a Figure 8
+reproduction and must not be used for comparisons.
+
+### Quadtree merge-map diagnosis
+
+Set `QT_DEBUG_DIR` to export the actual runtime plan as PNG plus NPZ. In the
+PNG, blue positions are removed sources, green positions mark the retained
+group output, red positions are untouched singletons, white lines are group
+boundaries, and intensity follows CFG importance. The Tower
+`r=0.70`, levels `[1,2]` maps are under `outputs/quadtree_debug_l12/maps`.
+
+The maps expose a hard capacity limit: a 2x2 merge removes three of four
+tokens, so removing 70% of all tokens requires selecting about 956 of the 1024
+available 2x2 blocks. Consequently 93.36% of spatial positions are members of
+merged groups and only 6.64% remain singleton, at every active denoising step.
+At this ratio, a 2x2-only method cannot merge only background; foreground
+merging is mathematically unavoidable. A foreground-preserving high-ratio
+variant needs partial within-block merging or coarse background blocks rather
+than whole-block 2x2 collapse.
+
+The corrected role map also exposed a shifted-grid bug: non-wrapping offsets
+crop the top/left border, forcing up to 127 arbitrary boundary tokens to remain
+singleton on a 64x64 grid. At `r=0.70` this can consume nearly half of the 272
+singleton positions. The fair video preset disables shifting until periodic
+(wrap-around) shifted blocks are implemented.
+
 This fork adds spatial token merging for AnimateDiff so video diffusion can be
 evaluated in the same style as the importance-token-merge paper. The comparison
 methods are:
 
 - `tome`: original random bipartite ToMe-style spatial token merging.
 - `importance`: CFG-importance-guided token merging from the importance paper.
-- `quadtree`: our spatial quadtree merging. For video, the default preset is conservative: late merge start and block levels `[1, 2]`.
+- `quadtree`: fair-control preset: fixed ratio, pruning/merging from step 4,
+  levels `[1,2,4]`, cost-global block allocation, and the same first/last-block
+  scope as the baselines. Flat background blocks carry coarse 4x4 merges while
+  expensive foreground regions retain finer tokens.
+- `qt_opt`: quality-oriented video preset: adaptive ratio, merge from step 14,
+  and levels `[1,2]`. Report it separately because its compute schedule is not
+  identical to the fair-control baselines.
 - `qt_early`: the aggressive image-style quadtree preset, kept for ablation only.
 
 Token merging is applied to spatial transformer tokens in AnimateDiff. Temporal
@@ -170,6 +210,19 @@ method, ratio, quadtree levels, adaptive schedule, and merge start step.
 
 ### Generate Videos for a VBench Table
 
+On the HCTLRDS cluster, submit generation through Slurm (do not run CUDA jobs
+on the login node):
+
+```
+cd /mnt/disk2/zeyu/Project/quadtree-token-merge/animatediff
+mkdir -p outputs/vbench_table_anim/logs
+sbatch -p a100_only scripts/slurm_vbench_generate.sh
+```
+
+This submits a 12-task array (3 methods x 4 ratios), capped at two concurrent
+GPUs. Each task validates that its MP4 exists and is non-empty. Monitor with
+`squeue -u $USER`; logs are in `outputs/vbench_table_anim/logs/`.
+
 The helper script generates videos for the table-style comparison:
 
 ```
@@ -228,6 +281,44 @@ The target table format is:
 | 0.60 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
 | 0.70 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
 | 0.75 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+
+### Current run (2026-07-11)
+
+- AnimateDiff v3 checkpoint: `models/Motion_Module/v3_sd15_mm.ckpt` (present).
+- Paper-compatible generation geometry: 16 frames at 512 x 512, 25 DDIM steps.
+- Spatial merging scope: `max_downsample=1`, i.e. the highest-resolution first
+  and last UNet blocks; temporal attention remains unmerged.
+- The current one-prompt config is a full-resolution pipeline/quality smoke
+  test, not a publishable VBench estimate. Standard VBench evaluation requires
+  the official prompt suite and multiple samples per prompt.
+- Full-resolution preflight passed as Slurm job `17369_0`: ToMe at `r=0.40`
+  completed in 68 seconds and produced a 16-frame MP4. The remaining matrix was
+  submitted in QOS-safe batches; see `squeue -u chenzeyu` for live status.
+- Quadtree quality follow-up: adding 4x4 blocks (`[1,2,4]`, job `17375_0`)
+  did not improve the high-ratio samples and caused extra local breakage at
+  `r=0.60`, so it was rejected. Moving the conservative `[1,2]` preset from
+  merge step 10 to step 14 improved foreground edge/detail retention at
+  `r=0.70` (job `17376_0`); this is now the video default.
+- Fair-control diagnosis (jobs `17378_0`--`17380_0`): step-4 fixed-ratio
+  quadtree merging remains poor even after removing early representative-only
+  pruning, temporal-max importance pooling, and restoring image-style
+  `[1,2,4]` levels. The dominant failure is early high-noise local block
+  averaging, not missing temporal trajectory protection. Temporal-max was
+  therefore rejected. Use `quadtree` for controlled comparisons and `qt_opt`
+  only as a separately labelled quality/schedule variant.
+- A 768x768 test at `r=0.70` (job `17382_0`) worsened framing and subject
+  duplication, so the paper-facing setup remains 512x512. Cost-global
+  allocation at 512px (job `17383_0`) retained foreground structure better
+  than saturating nearly every 2x2 block and is now the fair preset default.
+- Single-video VBench screening at `r=0.70` (job `17386`) found that
+  cost-global Quadtree improves motion smoothness over ToMe (0.888 vs 0.833),
+  but trails in subject consistency (0.704 vs 0.810) and imaging quality
+  (0.493 vs 0.700). Sharpening importance weights to power 4 reduced imaging
+  quality further (0.419), so that experiment was rejected.
+- The late-start `qt_opt` screen improved background consistency to 0.905 and
+  motion smoothness to 0.872, but still trailed ToMe in subject consistency
+  (0.749 vs 0.810) and imaging quality (0.496 vs 0.700). It is therefore not
+  presented as the winning configuration based on this one-video screen.
 
 
 ## Technical Explanation
@@ -492,3 +583,109 @@ Bo Dai: [doubledaibo@gmail.com](mailto:doubledaibo@gmail.com)
 
 ## Acknowledgements
 Codebase built upon [Tune-a-Video](https://github.com/showlab/Tune-A-Video).
+### Quadtree video CFG-map correction (2026-07-12)
+
+The first video port did **not** match the image-generation implementation: it
+reshaped the CFG residual maps from `[B,F,H,W]` to `[B*F,H,W]`, after which
+`plan_quadtree` averaged dimension 0.  Consequently all 16 frames shared one
+temporally averaged merge map; moving foreground responses were diluted and the
+Tower example mainly protected the roof.
+
+The video implementation now follows `pipe_sd.py` frame by frame.  It computes
+`abs(noise_pred_text-noise_pred_uncond).mean(channel)` and constructs one
+Quadtree plan for each frame, then applies the corresponding plan to both the
+unconditional and conditional CFG branches.  No temporal averaging is used.
+The fair Quadtree preset uses only 1x1/2x2 leaves and disables shifted crops.
+
+Validation job `17411` completed successfully (AnimateDiff v3 motion module,
+RealisticVision V6 SD1.5 base, 16 frames, 512x512, 30 steps, CFG 7.5, `r=0.7`).
+The corrected three-method frame-8 visualization is saved at
+`outputs/mergeviz_tower_framecfg_comparison.png`; the corrected Tower video is
+`outputs/quadtree_framecfg_l12/quadtree/r0p70/videos/00000.mp4`.
+
+For 2x2-only merging, one selected block removes three of four tokens.  Thus at
+`r=0.7`, approximately `0.7/0.75 = 93.3%` of all 2x2 blocks must be selected.
+The dense regular background grid in the visualization is therefore expected;
+the meaningful diagnostic is whether the remaining singleton blocks follow the
+per-frame high-CFG foreground/detail regions.
+
+#### Superseding implementation: exact repository multi-resolution planner
+
+The earlier AnimateDiff debugging preset (`2x2-only`, `cost_global`, no shift)
+is not the method visualized by `tools/visualize_multires_merging.py` and must
+not be used as the main Quadtree result.  The production `quadtree` preset now
+matches the text-to-image code path in `tomesd/patch.py` and
+`tomesd/methods/merge_quadtree.py`: levels `[1,2,4]`, max-pooled CFG importance,
+`equal_quota`, importance-weighted aggregation, and a random grid shift on each
+denoising step.  AnimateDiff invokes that same planner once per video frame so
+the image implementation's batch mean cannot average away temporal motion.
+
+Runtime visualization now reports leaf resolution rather than merge-operation
+roles: green is an unmerged 1x1 leaf, yellow is a 2x2 group, and red is a 4x4
+group.  Validation job `17416` completed successfully.  For Tower frame 8 at
+`r=0.7`, the actual 64x64 plan contains 1231 groups (2865 removed tokens), 656
+1x1 leaves, 480 2x2 groups, and 95 4x4 groups.  The matching three-panel figure
+is `outputs/quadtree_repoimpl_tower/tower_frame8_resolution.png` and can be
+regenerated with `scripts/visualize_quadtree_resolution.py`.
+
+The video-specific code is isolated in
+`animatediff/tomesd_video/quadtree_adapter.py`.  It contains no block-selection
+algorithm: `plan_video_frames` calls the image `plan_quadtree` unchanged for
+each `[H,W]` CFG frame, and `merge_from_video_plans` only batches those plans in
+AnimateDiff's `[unconditional frames, conditional frames]` order.  Run
+`scripts/test_quadtree_adapter.py` to verify exact numerical parity.  The test
+checks image versus video `mean` merge, representative-token merge, unmerge,
+and both CFG branches with zero tolerance (`rtol=0`, `atol=0`).
+
+#### Video-quality optimized Quadtree (`qt_video_opt`)
+
+`qt_video_opt` preserves the control method's target token count but improves
+candidate ranking with three video-specific safeguards: percentile-normalized
+CFG maps take a three-frame temporal maximum (`lambda=0.7`), local conditional
+attention-feature disagreement is added to the score (`lambda=0.35`), and only
+25% of the removal budget may be spent on coarse 4x4 leaves. The remaining
+budget is filled with 2x2 leaves, so quality is not purchased by retaining more
+tokens. At 64x64 and `r=0.7`, both control and optimized plans keep 1231 groups
+and remove 2865 tokens; the 4x4 count changes from 95 to 47. The optimized
+10-prompt, three-ratio generation and VBench job is `17427`, dependent on the
+control job `17425`.
+
+#### Encoder/decoder plan split ablation (`qt_stage_split`)
+
+High-resolution encoder and decoder transformer blocks now carry explicit stage
+labels and use separate plan-cache keys. `qt_stage_split` keeps the control
+ratio and target K in every block, but uses `[1,2,4]` leaves in the encoder and
+only `[1,2]` leaves in the final detail-restoring decoder. This isolates the
+effect of decoder-side 4x4 merging without gaining compute. Its 10-prompt,
+three-ratio generation plus VBench job is `17439`, dependent on control job
+`17425`; output is `outputs/compare_10prompts_qt_stage_split`.
+
+Completed 10-prompt results show that reducing coarse groups was harmful at
+high ratios: at `r=0.7`, the continuous-quality proxy changed from 84.51
+(control) to 83.68 (`qt_video_opt`) and 83.05 (`qt_stage_split`). With fixed K,
+replacing 4x4 groups by 2x2 groups covers more spatial positions and reduces
+the number of untouched 1x1 leaves, which hurts aesthetic/imaging quality.
+
+The follow-up `qt_rank_opt` therefore preserves the control leaf budget exactly
+(at `r=0.7`: 656 1x1 leaves, 480 2x2 groups, 95 4x4 groups) and changes only
+candidate ranking using temporal CFG protection and local feature disagreement.
+Its 10-prompt, three-ratio generation plus VBench run is job `17447`, with
+outputs under `outputs/compare_10prompts_qt_rank_opt`.
+
+For rapid iteration, full job `17447` was stopped after one video and replaced
+by a three-prompt `r=0.7` gate using Tower, jellyfish, and Victorian streetlamp.
+The reusable inputs are `configs/prompts/vbench_quick3.yaml` and
+`configs/prompts/vbench_quick3_manifest.json`; the generation script accepts
+`EXPECTED_VIDEOS=3`. Ranking-only quick job `17448` generates three videos and
+runs VBench in the same allocation under `outputs/quick3_qt_rank_opt_r070`.
+Only candidates that improve the continuous quality dimensions at this gate
+should advance to the 10-prompt, three-ratio benchmark.
+
+With the experimental constraint relaxed to equal model/data/K rather than
+identical merge mechanics, `qt_similarity` replaces rigid block averaging.
+Quadtree still allocates exactly K spatial representatives (the highest-CFG
+token in each leaf), but every removed token is assigned to its most similar
+representative by current-block cosine similarity, as in ToMe. Thus attention
+token count/FLOPs remain comparable while adaptive destination density is kept.
+Shape/K and finite-output tests pass. Quick3 `r=0.7` job `17453` runs after the
+low-weight ablation job `17452`, under `outputs/quick3_qt_similarity_r070`.
