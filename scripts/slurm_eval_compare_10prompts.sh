@@ -16,7 +16,7 @@ CONDA="/mnt/disk2/zeyu/miniconda3/bin/conda"
 GEN="$AD/outputs/compare_10prompts"
 OUT="$GEN/vbench"
 MANIFEST="$AD/configs/prompts/vbench_compare_10_manifest.json"
-METHODS=(tome importance quadtree)
+METHODS=(tome importance quadtree_best)
 RATIOS=(0p40 0p60 0p70)
 
 mkdir -p "$OUT/logs"

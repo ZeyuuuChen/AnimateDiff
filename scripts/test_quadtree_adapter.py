@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tomesd.methods.merge_quadtree import merge_from_plan
+import animatediff.tomesd_video.patch as video_patch
 from animatediff.tomesd_video.quadtree_adapter import (
     merge_from_video_plans,
     plan_video_frames,
@@ -60,6 +61,12 @@ def main():
         similarity_full = similarity_unmerge(similarity_tokens)
         assert similarity_full.shape == x.shape
         assert torch.isfinite(similarity_full).all()
+    over_merge, over_unmerge = similarity_merge_from_video_plans(
+        plans, x, rep_mode="mixed", removed_tokens=h * w
+    )
+    over_tokens = over_merge(x)
+    assert over_tokens.shape == (2 * frames, plans[0]["K"], channels)
+    assert torch.isfinite(over_unmerge(over_tokens)).all()
     destination_plans = plan_video_frames(
         heat, w=w, h=h, removed_tokens=192,
         device=torch.device("cpu"), levels=[1, 2, 4],
@@ -71,8 +78,64 @@ def main():
     hybrid_tokens = hybrid_merge(x)
     assert hybrid_tokens.shape == (2 * frames, h * w - 179, channels)
     assert torch.isfinite(hybrid_unmerge(hybrid_tokens)).all()
+
+    original_planner = video_patch.plan_video_frames
+    calls = {"count": 0}
+
+    def counted_planner(*args, **kwargs):
+        calls["count"] += 1
+        return original_planner(*args, **kwargs)
+
+    def make_tome_info(feature_lambda):
+        return {
+            "size": (h, w),
+            "args": {
+                "ratio": 0.7,
+                "max_downsample": 1,
+                "sx": 2,
+                "sy": 2,
+                "use_rand": True,
+                "generator": None,
+                "merge_attn": True,
+                "merge_crossattn": False,
+                "merge_mlp": False,
+                "err_mask": {"heat_map": heat},
+                "m_mode": "mean",
+                "use_quadtree": True,
+                "quadtree_levels": [1, 2, 4],
+                "quadtree_pool": "max",
+                "quadtree_budget_mode": "equal_quota",
+                "quadtree_offset_x": 0,
+                "quadtree_offset_y": 0,
+                "quadtree_weighted": True,
+                "quadtree_temporal_lambda": 0.0,
+                "quadtree_feature_lambda": feature_lambda,
+                "quadtree_coarse_budget_fraction": None,
+                "quadtree_decoder_fine": False,
+                "quadtree_similarity_merge": False,
+                "quadtree_similarity_rep": "cfg",
+                "quadtree_similarity_dst_ratio": None,
+            },
+        }
+
+    try:
+        video_patch.plan_video_frames = counted_planner
+        static_info = make_tome_info(0.0)
+        video_patch.compute_merge(x, static_info, stage="encoder")
+        video_patch.compute_merge(x + 1, static_info, stage="encoder")
+        assert calls["count"] == 1
+
+        calls["count"] = 0
+        feature_info = make_tome_info(0.5)
+        video_patch.compute_merge(x, feature_info, stage="encoder")
+        video_patch.compute_merge(x + 1, feature_info, stage="encoder")
+        assert calls["count"] == 2
+    finally:
+        video_patch.plan_video_frames = original_planner
+
     print("PASS: video adapter is numerically identical to image Quadtree per frame")
     print("PASS: Quadtree-guided similarity merge preserves exact K and shape")
+    print("PASS: feature-aware Quadtree plans are not reused across blocks")
 
 
 if __name__ == "__main__":

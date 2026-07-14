@@ -186,9 +186,15 @@ def compute_merge(
             cache_key = (
                 stage, x.shape[1], r, plan_removed, tuple(qt_levels), heat_map.shape[0]
             )
+            # Feature-aware scoring depends on the current transformer's hidden
+            # states, so a shape/stage cache would silently reuse the first
+            # block's feature plan for later blocks. Pure CFG plans are shared.
+            cache_feature_plans = args.get("quadtree_feature_lambda", 0.0) <= 0.0
             qt_cache = args.setdefault("_quadtree_plan_cache", {})
-            if cache_key not in qt_cache:
-                qt_cache[cache_key] = plan_video_frames(
+            if cache_feature_plans and cache_key in qt_cache:
+                plans = qt_cache[cache_key]
+            else:
+                plans = plan_video_frames(
                     plan_heat_map,
                     w=w,
                     h=h,
@@ -203,7 +209,8 @@ def compute_merge(
                         "quadtree_coarse_budget_fraction", None
                     ),
                 )
-            plans = qt_cache[cache_key]
+                if cache_feature_plans:
+                    qt_cache[cache_key] = plans
             if cache_key not in args.setdefault("_debugged_quadtree_plans", set()):
                 _save_quadtree_debug(plans[min(7, len(plans) - 1)], w, h)
                 args["_debugged_quadtree_plans"].add(cache_key)

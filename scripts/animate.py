@@ -169,7 +169,7 @@ def apply_merge_preset(args):
         args.quadtree_coarse_budget_fraction = None
         args.quadtree_decoder_fine = False
         args.adaptive_ratio = False
-    elif args.merge_method in ("qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed"):
+    elif args.merge_method in ("qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed", "quadtree_best"):
         # Quadtree allocates spatial representatives; feature similarity, not
         # rigid block membership, determines every source-to-destination edge.
         args.prune_from_i = 4
@@ -191,6 +191,7 @@ def apply_merge_preset(args):
             "qt_similarity": "cfg",
             "qt_similarity_medoid": "medoid",
             "qt_similarity_mixed": "mixed",
+            "quadtree_best": "mixed",
         }[args.merge_method]
         args.adaptive_ratio = False
     elif args.merge_method in ("qt_similarity_spread", "qt_similarity_focus"):
@@ -503,7 +504,7 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=8)
 
     parser.add_argument("--merge-method", type=str, default=None,
-                        choices=["baseline", "tome", "importance", "quadtree", "qt_video_opt", "qt_stage_split", "qt_rank_opt", "qt_feature_only", "qt_temporal_only", "qt_feature_low", "qt_temporal_low", "qt_uniform", "qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed", "qt_similarity_spread", "qt_similarity_focus", "qt_hybrid_medoid", "qt_hybrid_mixed", "qt_hybrid_d20", "qt_hybrid_d30", "qt_early", "qt_opt"])
+                        choices=["baseline", "tome", "importance", "quadtree", "quadtree_best", "qt_video_opt", "qt_stage_split", "qt_rank_opt", "qt_feature_only", "qt_temporal_only", "qt_feature_low", "qt_temporal_low", "qt_uniform", "qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed", "qt_similarity_spread", "qt_similarity_focus", "qt_hybrid_medoid", "qt_hybrid_mixed", "qt_hybrid_d20", "qt_hybrid_d30", "qt_early", "qt_opt"])
     parser.add_argument("--prune-from-i", type=int, default=-1)
     parser.add_argument("--merge-from-i", type=int, default=-1)
     parser.add_argument("--compress-ratio", type=float, default=0.0)

@@ -1,0 +1,16 @@
+- dreambooth_path: ""
+  lora_model_path: ""
+  inference_config: "configs/inference/inference-v3.yaml"
+  motion_module: "models/Motion_Module/v3_sd15_mm.ckpt"
+
+  seed: [1234, 1234, 1234]
+  steps: 30
+  guidance_scale: 7.5
+
+  prompt:
+    - "Tower"
+    - "A jellyfish floating through the ocean, with bioluminescent tentacles"
+    - "In a still frame, the ornate Victorian streetlamp stands solemnly, adorned with intricate ironwork and stained glass panels"
+
+  n_prompt:
+    - "low quality, blurry, distorted, watermark, text"
