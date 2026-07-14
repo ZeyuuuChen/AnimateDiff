@@ -689,3 +689,18 @@ representative by current-block cosine similarity, as in ToMe. Thus attention
 token count/FLOPs remain comparable while adaptive destination density is kept.
 Shape/K and finite-output tests pass. Quick3 `r=0.7` job `17453` runs after the
 low-weight ablation job `17452`, under `outputs/quick3_qt_similarity_r070`.
+
+#### Current recommended Quadtree method
+
+Use `--merge-method quadtree_best` for the current paper-facing Quadtree method.
+It is an alias for `qt_similarity_mixed`: Quadtree allocates adaptive spatial
+representatives, while feature similarity assigns removed tokens to
+representatives. This avoids the rigid geometric block averaging that made
+`quadtree` and `qt_rank_opt` visibly blur high-frequency structures.
+
+Quick3 RealisticVision reruns at `r=0.70` are grouped under
+`outputs/quick3_r070_realisticvision_all_methods_20260714T124203/`. The
+comparison sheet and edge-energy proxy show that `qt_similarity_mixed` recovers
+substantially more detail than `quadtree` / `qt_rank_opt`, especially on
+jellyfish and streetlamp prompts. The base `quadtree` preset is kept for
+ablation only; default generation/evaluation scripts now use `quadtree_best`.

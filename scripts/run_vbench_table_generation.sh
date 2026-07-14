@@ -20,7 +20,7 @@ H="${H:-512}"
 L="${L:-16}"
 FPS="${FPS:-8}"
 RATIOS="${RATIOS:-0.40 0.60 0.70 0.75}"
-METHODS="${METHODS:-tome importance quadtree}"
+METHODS="${METHODS:-tome importance quadtree_best}"
 PRETRAINED_MODEL_PATH="${PRETRAINED_MODEL_PATH:-/mnt/disk2/zeyu/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/451f4fe16113bff5a5d2269ed5ad43b0592e9a14}"
 
 mkdir -p "$OUT_ROOT"

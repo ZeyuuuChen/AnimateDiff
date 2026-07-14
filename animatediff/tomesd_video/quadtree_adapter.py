@@ -221,9 +221,7 @@ def similarity_merge_from_video_plans(
         similarity = torch.cat(similarity, dim=1)
 
         total_sources = src_idx.shape[1]
-        removed = total_sources if removed_tokens is None else removed_tokens
-        if removed > total_sources:
-            raise ValueError(f"cannot remove {removed} from {total_sources} sources")
+        removed = total_sources if removed_tokens is None else min(removed_tokens, total_sources)
         if removed < total_sources:
             # Match Importance's useful behavior: low-CFG tokens are always
             # eligible, while high-CFG/low-similarity tokens stay unmerged.
