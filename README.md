@@ -282,6 +282,85 @@ The target table format is:
 | 0.70 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
 | 0.75 | -- | -- | -- | -- | -- | -- | -- | -- | -- |
 
+### Official VBench 16-Dimension Smoke
+
+Use this path for the official VBench metadata pipeline. It is different from
+the custom prompt proxy because several semantic dimensions require
+`auxiliary_info` from `VBench_full_info.json`.
+
+This repository includes an 11-prompt official subset that covers all 16 VBench
+dimensions:
+
+- `configs/prompts/vbench_official16_smoke.yaml`: AnimateDiff generation config.
+- `configs/prompts/vbench_official16_smoke_full_info.json`: VBench metadata with
+  the required `auxiliary_info` fields.
+- `configs/prompts/vbench_official16_smoke_manifest.json`: generated MP4 index to
+  prompt mapping.
+
+Generate baseline, ToMe, Importance, and Quadtree outputs at `r=0.60`:
+
+```
+cd /home/zeyu/Projects/quadtree-token-merge/animatediff
+
+OUT_ROOT=outputs/official16_smoke_r060
+CONFIG=configs/prompts/vbench_official16_smoke.yaml
+MODEL=/home/zeyu/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/451f4fe16113bff5a5d2269ed5ad43b0592e9a14
+
+for method in baseline tome importance quadtree_best; do
+  /home/zeyu/miniconda3/bin/conda run --no-capture-output -n sana python -u scripts/animate.py \
+    --pretrained-model-path "$MODEL" \
+    --config "$CONFIG" \
+    --W 512 --H 512 --L 16 --without-xformers \
+    --merge-method "$method" --compress-ratio 0.60 \
+    --savedir "$OUT_ROOT/$method/r0p60" --save-mp4 --fps 8
+done
+```
+
+VBench standard mode searches for files named exactly `<prompt>-0.mp4`, while
+AnimateDiff saves `00000.mp4`, `00001.mp4`, etc. Build a standard-layout input
+folder with symlinks before evaluation:
+
+```
+python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path("outputs/official16_smoke_r060")
+info = json.loads(Path("configs/prompts/vbench_official16_smoke_full_info.json").read_text())
+
+for method in ["baseline", "tome", "importance", "quadtree_best"]:
+    src = root / method / "r0p60" / "videos"
+    dst = root / "vbench_standard_inputs" / method / "r0p60"
+    dst.mkdir(parents=True, exist_ok=True)
+    for i, item in enumerate(info):
+        link = dst / f"{item['prompt_en']}-0.mp4"
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        os.symlink((src / f"{i:05d}.mp4").resolve(), link)
+PY
+```
+
+Run the official 16 dimensions in the `vbench` environment:
+
+```
+DIMS="subject_consistency background_consistency temporal_flickering motion_smoothness dynamic_degree aesthetic_quality imaging_quality object_class multiple_objects human_action color spatial_relationship scene appearance_style temporal_style overall_consistency"
+VB=/home/zeyu/Projects/VBench
+
+for method in baseline tome importance quadtree_best; do
+  /home/zeyu/miniconda3/bin/conda run --no-capture-output -n vbench python -u "$VB/evaluate.py" \
+    --output_path "$OUT_ROOT/vbench_official16/$method/r0p60" \
+    --full_json_dir configs/prompts/vbench_official16_smoke_full_info.json \
+    --videos_path "$OUT_ROOT/vbench_standard_inputs/$method/r0p60" \
+    --mode vbench_standard \
+    --dimension $DIMS
+done
+```
+
+The 11-prompt subset is only a smoke test for the official metadata path. For a
+paper table, replace the subset with the full official VBench prompt suite and
+keep the same standard filename layout and `vbench_standard` evaluation mode.
+
 ### Current run (2026-07-11)
 
 - AnimateDiff v3 checkpoint: `models/Motion_Module/v3_sd15_mm.ckpt` (present).
