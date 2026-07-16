@@ -27,8 +27,15 @@ def video_importance(
     *,
     temporal_lambda: float = 0.0,
     feature_lambda: float = 0.0,
+    motion_lambda: float = 0.0,
 ) -> torch.Tensor:
-    """Combine CFG saliency, neighboring-frame protection and feature detail."""
+    """Combine CFG saliency, neighboring-frame protection and feature detail.
+
+    ``temporal_lambda`` protects prompt-salient regions in adjacent frames.
+    ``motion_lambda`` is different: it protects tokens whose conditional hidden
+    states change across frames, even when the CFG map is weak.  This is the
+    knob that matters for VBench action/dynamic-degree prompts.
+    """
     importance = _normalize_per_frame(heat_map)
     if temporal_lambda > 0 and importance.shape[0] > 1:
         previous = torch.cat([importance[:1], importance[:-1]], dim=0)
@@ -37,7 +44,7 @@ def video_importance(
             importance, temporal_lambda * torch.maximum(previous, following)
         )
 
-    if feature_lambda > 0 and metric is not None:
+    if (feature_lambda > 0 or motion_lambda > 0) and metric is not None:
         # metric is one conditional spatial-attention sequence per frame [F,N,C].
         frames, tokens, channels = metric.shape
         side_h, side_w = heat_map.shape[-2:]
@@ -45,10 +52,19 @@ def video_importance(
             unit = F.normalize(metric.float(), dim=-1).transpose(1, 2).reshape(
                 frames, channels, side_h, side_w
             )
-            local_mean = F.avg_pool2d(unit, 3, stride=1, padding=1)
-            local_mean = F.normalize(local_mean, dim=1)
-            disagreement = 1.0 - (unit * local_mean).sum(1)
-            importance = importance + feature_lambda * _normalize_per_frame(disagreement)
+            if feature_lambda > 0:
+                local_mean = F.avg_pool2d(unit, 3, stride=1, padding=1)
+                local_mean = F.normalize(local_mean, dim=1)
+                disagreement = 1.0 - (unit * local_mean).sum(1)
+                importance = importance + feature_lambda * _normalize_per_frame(disagreement)
+            if motion_lambda > 0 and frames > 1:
+                previous = torch.cat([unit[:1], unit[:-1]], dim=0)
+                following = torch.cat([unit[1:], unit[-1:]], dim=0)
+                motion = torch.maximum(
+                    (unit - previous).square().mean(1).sqrt(),
+                    (unit - following).square().mean(1).sqrt(),
+                )
+                importance = importance + motion_lambda * _normalize_per_frame(motion)
     return importance
 
 
@@ -145,6 +161,7 @@ def merge_from_video_plans(
 def similarity_merge_from_video_plans(
     plans: List[Dict], metric: torch.Tensor, rep_mode: str = "cfg",
     removed_tokens: Optional[int] = None,
+    protect_multiplier: float = 1.4,
 ) -> Tuple[Callable, Callable]:
     """Use Quadtree only to allocate representatives, then similarity-match.
 
@@ -229,7 +246,7 @@ def similarity_merge_from_video_plans(
             importance = importance_f.repeat(copies, 1)
             src_importance = torch.gather(importance, 1, src_idx)
             keep_total = n - removed
-            protected_pool = min(int(keep_total * 1.4), n)
+            protected_pool = min(max(int(keep_total * protect_multiplier), 1), n)
             threshold = torch.topk(importance, protected_pool, dim=1).values[:, -1:]
             priority = similarity + (src_importance < threshold).to(similarity) * 1e5
             order = priority.argsort(dim=1, descending=True)

@@ -169,7 +169,7 @@ def apply_merge_preset(args):
         args.quadtree_coarse_budget_fraction = None
         args.quadtree_decoder_fine = False
         args.adaptive_ratio = False
-    elif args.merge_method in ("qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed", "quadtree_best"):
+    elif args.merge_method in ("qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed"):
         # Quadtree allocates spatial representatives; feature similarity, not
         # rigid block membership, determines every source-to-destination edge.
         args.prune_from_i = 4
@@ -191,8 +191,30 @@ def apply_merge_preset(args):
             "qt_similarity": "cfg",
             "qt_similarity_medoid": "medoid",
             "qt_similarity_mixed": "mixed",
-            "quadtree_best": "mixed",
         }[args.merge_method]
+        args.adaptive_ratio = False
+    elif args.merge_method in ("quadtree_best", "quadtree_semantic_motion"):
+        # VBench-oriented Quadtree: preserve adaptive spatial representatives,
+        # but protect prompt-salient and temporally moving regions more
+        # aggressively before assigning low-value tokens by feature similarity.
+        args.prune_from_i = 4
+        args.merge_from_i = 4
+        args.compress_ratio = ratio
+        args.free_err_mask = True
+        args.use_quadtree = True
+        args.quadtree_levels = args.quadtree_levels or [1, 2, 4]
+        args.quadtree_pool = "max"
+        args.quadtree_budget_mode = "equal_quota"
+        args.quadtree_no_shift = False
+        args.quadtree_unweighted = True
+        args.quadtree_temporal_lambda = 0.35
+        args.quadtree_feature_lambda = 0.05
+        args.quadtree_motion_lambda = 0.85
+        args.quadtree_coarse_budget_fraction = None
+        args.quadtree_decoder_fine = False
+        args.quadtree_similarity_merge = True
+        args.quadtree_similarity_rep = "mixed"
+        args.quadtree_similarity_protect_multiplier = 2.05
         args.adaptive_ratio = False
     elif args.merge_method in ("qt_similarity_spread", "qt_similarity_focus"):
         # Same K with different spatial destination density. Spread uses more
@@ -413,11 +435,13 @@ def main(args):
             "quadtree_budget_mode": model_config.get("quadtree_budget_mode", args.quadtree_budget_mode),
             "quadtree_temporal_lambda": model_config.get("quadtree_temporal_lambda", args.quadtree_temporal_lambda),
             "quadtree_feature_lambda": model_config.get("quadtree_feature_lambda", args.quadtree_feature_lambda),
+            "quadtree_motion_lambda": model_config.get("quadtree_motion_lambda", args.quadtree_motion_lambda),
             "quadtree_coarse_budget_fraction": model_config.get("quadtree_coarse_budget_fraction", args.quadtree_coarse_budget_fraction),
             "quadtree_decoder_fine": model_config.get("quadtree_decoder_fine", args.quadtree_decoder_fine),
             "quadtree_similarity_merge": model_config.get("quadtree_similarity_merge", args.quadtree_similarity_merge),
             "quadtree_similarity_rep": model_config.get("quadtree_similarity_rep", args.quadtree_similarity_rep),
             "quadtree_similarity_dst_ratio": model_config.get("quadtree_similarity_dst_ratio", args.quadtree_similarity_dst_ratio),
+            "quadtree_similarity_protect_multiplier": model_config.get("quadtree_similarity_protect_multiplier", args.quadtree_similarity_protect_multiplier),
             "adaptive_ratio": model_config.get("adaptive_ratio", args.adaptive_ratio),
             "adaptive_alpha": model_config.get("adaptive_alpha", args.adaptive_alpha),
             "max_downsample": model_config.get("max_downsample", args.max_downsample),
@@ -459,11 +483,13 @@ def main(args):
                 quadtree_budget_mode = model_config.get("quadtree_budget_mode", args.quadtree_budget_mode),
                 quadtree_temporal_lambda = model_config.get("quadtree_temporal_lambda", args.quadtree_temporal_lambda),
                 quadtree_feature_lambda = model_config.get("quadtree_feature_lambda", args.quadtree_feature_lambda),
+                quadtree_motion_lambda = model_config.get("quadtree_motion_lambda", args.quadtree_motion_lambda),
                 quadtree_coarse_budget_fraction = model_config.get("quadtree_coarse_budget_fraction", args.quadtree_coarse_budget_fraction),
                 quadtree_decoder_fine = model_config.get("quadtree_decoder_fine", args.quadtree_decoder_fine),
                 quadtree_similarity_merge = model_config.get("quadtree_similarity_merge", args.quadtree_similarity_merge),
                 quadtree_similarity_rep = model_config.get("quadtree_similarity_rep", args.quadtree_similarity_rep),
                 quadtree_similarity_dst_ratio = model_config.get("quadtree_similarity_dst_ratio", args.quadtree_similarity_dst_ratio),
+                quadtree_similarity_protect_multiplier = model_config.get("quadtree_similarity_protect_multiplier", args.quadtree_similarity_protect_multiplier),
                 adaptive_ratio = model_config.get("adaptive_ratio", args.adaptive_ratio),
                 adaptive_alpha = model_config.get("adaptive_alpha", args.adaptive_alpha),
                 max_downsample = model_config.get("max_downsample", args.max_downsample),
@@ -504,7 +530,7 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, default=8)
 
     parser.add_argument("--merge-method", type=str, default=None,
-                        choices=["baseline", "tome", "importance", "quadtree", "quadtree_best", "qt_video_opt", "qt_stage_split", "qt_rank_opt", "qt_feature_only", "qt_temporal_only", "qt_feature_low", "qt_temporal_low", "qt_uniform", "qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed", "qt_similarity_spread", "qt_similarity_focus", "qt_hybrid_medoid", "qt_hybrid_mixed", "qt_hybrid_d20", "qt_hybrid_d30", "qt_early", "qt_opt"])
+                        choices=["baseline", "tome", "importance", "quadtree", "quadtree_best", "quadtree_semantic_motion", "qt_video_opt", "qt_stage_split", "qt_rank_opt", "qt_feature_only", "qt_temporal_only", "qt_feature_low", "qt_temporal_low", "qt_uniform", "qt_similarity", "qt_similarity_medoid", "qt_similarity_mixed", "qt_similarity_spread", "qt_similarity_focus", "qt_hybrid_medoid", "qt_hybrid_mixed", "qt_hybrid_d20", "qt_hybrid_d30", "qt_early", "qt_opt"])
     parser.add_argument("--prune-from-i", type=int, default=-1)
     parser.add_argument("--merge-from-i", type=int, default=-1)
     parser.add_argument("--compress-ratio", type=float, default=0.0)
@@ -518,11 +544,13 @@ if __name__ == "__main__":
     parser.add_argument("--quadtree-budget-mode", type=str, default="equal_quota", choices=["equal_quota", "cost_global"])
     parser.add_argument("--quadtree-temporal-lambda", type=float, default=0.0)
     parser.add_argument("--quadtree-feature-lambda", type=float, default=0.0)
+    parser.add_argument("--quadtree-motion-lambda", type=float, default=0.0)
     parser.add_argument("--quadtree-coarse-budget-fraction", type=float, default=None)
     parser.add_argument("--quadtree-decoder-fine", action="store_true")
     parser.add_argument("--quadtree-similarity-merge", action="store_true")
     parser.add_argument("--quadtree-similarity-rep", type=str, default="cfg", choices=["cfg", "medoid", "mixed"])
     parser.add_argument("--quadtree-similarity-dst-ratio", type=float, default=None)
+    parser.add_argument("--quadtree-similarity-protect-multiplier", type=float, default=1.4)
     parser.add_argument("--adaptive-ratio", action="store_true")
     parser.add_argument("--adaptive-alpha", type=float, default=1.0)
     parser.add_argument("--max-downsample", type=int, default=1)

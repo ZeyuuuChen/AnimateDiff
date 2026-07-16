@@ -174,6 +174,7 @@ def compute_merge(
                 conditional_metric,
                 temporal_lambda=args.get("quadtree_temporal_lambda", 0.0),
                 feature_lambda=args.get("quadtree_feature_lambda", 0.0),
+                motion_lambda=args.get("quadtree_motion_lambda", 0.0),
             )
             # Encoder and decoder must never share a spatial plan: the decoder
             # restores final detail and may use a finer leaf set.
@@ -189,7 +190,10 @@ def compute_merge(
             # Feature-aware scoring depends on the current transformer's hidden
             # states, so a shape/stage cache would silently reuse the first
             # block's feature plan for later blocks. Pure CFG plans are shared.
-            cache_feature_plans = args.get("quadtree_feature_lambda", 0.0) <= 0.0
+            cache_feature_plans = (
+                args.get("quadtree_feature_lambda", 0.0) <= 0.0
+                and args.get("quadtree_motion_lambda", 0.0) <= 0.0
+            )
             qt_cache = args.setdefault("_quadtree_plan_cache", {})
             if cache_feature_plans and cache_key in qt_cache:
                 plans = qt_cache[cache_key]
@@ -219,6 +223,9 @@ def compute_merge(
                     plans, x,
                     rep_mode=args.get("quadtree_similarity_rep", "cfg"),
                     removed_tokens=r,
+                    protect_multiplier=args.get(
+                        "quadtree_similarity_protect_multiplier", 1.4
+                    ),
                 )
             else:
                 m, u = merge_from_video_plans(
@@ -366,11 +373,13 @@ def apply_patch(
     quadtree_weight_power: float = 1.0,
     quadtree_temporal_lambda: float = 0.0,
     quadtree_feature_lambda: float = 0.0,
+    quadtree_motion_lambda: float = 0.0,
     quadtree_coarse_budget_fraction: float = None,
     quadtree_decoder_fine: bool = False,
     quadtree_similarity_merge: bool = False,
     quadtree_similarity_rep: str = "cfg",
     quadtree_similarity_dst_ratio: float = None,
+    quadtree_similarity_protect_multiplier: float = 1.4,
 ):
     remove_patch(model)
 
@@ -414,11 +423,15 @@ def apply_patch(
             "quadtree_weight_power": quadtree_weight_power,
             "quadtree_temporal_lambda": quadtree_temporal_lambda,
             "quadtree_feature_lambda": quadtree_feature_lambda,
+            "quadtree_motion_lambda": quadtree_motion_lambda,
             "quadtree_coarse_budget_fraction": quadtree_coarse_budget_fraction,
             "quadtree_decoder_fine": quadtree_decoder_fine,
             "quadtree_similarity_merge": quadtree_similarity_merge,
             "quadtree_similarity_rep": quadtree_similarity_rep,
             "quadtree_similarity_dst_ratio": quadtree_similarity_dst_ratio,
+            "quadtree_similarity_protect_multiplier": (
+                quadtree_similarity_protect_multiplier
+            ),
         },
     }
     hook_tome_model(diffusion_model)

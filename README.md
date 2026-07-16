@@ -772,10 +772,27 @@ low-weight ablation job `17452`, under `outputs/quick3_qt_similarity_r070`.
 #### Current recommended Quadtree method
 
 Use `--merge-method quadtree_best` for the current paper-facing Quadtree method.
-It is an alias for `qt_similarity_mixed`: Quadtree allocates adaptive spatial
-representatives, while feature similarity assigns removed tokens to
-representatives. This avoids the rigid geometric block averaging that made
-`quadtree` and `qt_rank_opt` visibly blur high-frequency structures.
+As of the VBench-100 follow-up, it is a VBench-oriented semantic/motion preset
+rather than a plain `qt_similarity_mixed` alias. Quadtree still allocates
+adaptive spatial representatives, while feature similarity assigns removed
+tokens to representatives, but the planner now also protects:
+
+- neighboring-frame CFG saliency (`quadtree_temporal_lambda=0.35`),
+- local conditional-feature detail (`quadtree_feature_lambda=0.05`), and
+- true frame-to-frame conditional hidden-state motion
+  (`quadtree_motion_lambda=0.85`).
+
+The similarity merge also protects a larger high-importance pool
+(`quadtree_similarity_protect_multiplier=2.05`) before selecting low-value
+tokens to merge. This targets the previous VBench failure mode where
+`quadtree_best` had the highest imaging quality but lost semantic/action
+dimensions, especially `dynamic_degree`, `human_action`, and
+`multiple_objects`.
+
+The old similarity-only version remains available as
+`--merge-method qt_similarity_mixed`. The explicit alias
+`--merge-method quadtree_semantic_motion` is equivalent to the current
+`quadtree_best`.
 
 Quick3 RealisticVision reruns at `r=0.70` are grouped under
 `outputs/quick3_r070_realisticvision_all_methods_20260714T124203/`. The
@@ -783,3 +800,6 @@ comparison sheet and edge-energy proxy show that `qt_similarity_mixed` recovers
 substantially more detail than `quadtree` / `qt_rank_opt`, especially on
 jellyfish and streetlamp prompts. The base `quadtree` preset is kept for
 ablation only; default generation/evaluation scripts now use `quadtree_best`.
+
+The first quick gate for the semantic/motion preset is job `17559`, writing to
+`outputs/quick3_quadtree_semantic_motion_r070`.
